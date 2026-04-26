@@ -6,10 +6,12 @@ A modular chatbot with a Gradio UI, LangChain backend, swappable models (OpenAI 
 
 ## Features
 
-- **Swappable models** — GPT-4o, GPT-3.5-turbo, llama3.2, mistral, or any custom Ollama model
+- **Swappable models** — GPT-4o, GPT-3.5-turbo, llama3.2, mistral, Qwen3 8b, or any custom Ollama model
 - **Local PDF RAG** — upload a PDF, index it locally with `nomic-embed-text`, chat against it with no data leaving your machine
 - **RAG grounding mode** — toggle between *Grounded (retrieval-only)* and *Augmented (retrieval + parametric)*
-- **Document Inspector** — chunk browser, size distribution charts, and a retrieval tester to verify RAG quality before chatting
+- **Chain of Thought** — see the model's internal reasoning for every message; full thinking blocks for Qwen3 and deepseek-r1
+- **Retrieval Inspector** — auto-updated after every chat message; shows the exact chunks retrieved with similarity scores and page numbers
+- **Document Inspector** — chunk browser and size distribution charts to verify indexing quality
 - **Per-session memory** — 10-turn sliding window, isolated per browser session
 - **Transparency badges** — every response shows model, provider, latency, and RAG mode
 
@@ -29,6 +31,7 @@ A modular chatbot with a Gradio UI, LangChain backend, swappable models (OpenAI 
 ollama pull llama3.2          # default chat model
 ollama pull nomic-embed-text  # required for PDF RAG
 ollama pull mistral           # optional
+ollama pull qwen3:8b          # optional — enables Chain of Thought
 ```
 
 ---
@@ -96,22 +99,31 @@ Open **http://localhost:7860**.
 
 ### Chat tab
 
-1. Select a model from the dropdown
-2. Choose a **RAG grounding mode** (appears once a document is indexed):
-   - **Grounded — retrieval-only**: answers are strictly limited to the PDF chunks
+1. Select a model from the dropdown. Select **Qwen3 8b (Ollama) 🧠** to see reasoning in the Chain of Thought tab.
+2. Choose a **RAG grounding mode** (only applies once a document is indexed):
+   - **Grounded — retrieval-only**: answers are strictly limited to the PDF chunks; refuses if the answer is not in the document
    - **Augmented — retrieval + parametric**: model may blend document content with its training knowledge, labelling each source
 3. Type a message and press Enter or click **Send**
 
+The Retrieval Inspector and Chain of Thought tabs update automatically after every message.
+
 ### Upload Document tab
 
-1. Select a PDF file
-2. Click **Index document** — status updates in real time
-3. Once indexed, RAG mode activates automatically in the Chat tab
+1. Select a PDF file and click **Index document** — status updates in real time
+2. Once indexed, RAG mode activates automatically in the Chat tab
+3. The **Document Inspector** section shows chunk analytics (size distribution chart, chunks-per-page chart, full chunk browser table) — auto-refreshes after indexing, or click **Refresh inspector** manually
 
-### Document Inspector tab
+### Retrieval Inspector tab
 
-1. Click **Load inspector** to see chunk analytics (size distribution, chunks per page)
-2. Use the **Retrieval Tester** at the bottom — type a question and click **Test retrieval** to see the exact chunks the retriever would surface, with similarity scores and page numbers, before committing to a full chat
+Shows the top-k chunks the retriever surfaced for the **latest chat question**, updated automatically after every message. Use this to verify the right sections are being retrieved before diagnosing answer quality.
+
+### Chain of Thought tab
+
+Shows the model's internal reasoning for the **latest chat question**, updated automatically after every message.
+
+- **Qwen3** (via Ollama): full thinking blocks via `reasoning=True` — the model reasons before answering
+- **deepseek-r1** and similar: inline `<think>…</think>` tags are extracted automatically
+- All other models: no thinking blocks; a prompt is shown to switch to a reasoning model
 
 ---
 
@@ -174,4 +186,4 @@ Short, fact-dense documents work best:
 | [Attention Is All You Need](https://arxiv.org/pdf/1706.03762) | Specific numbers: BLEU scores, hyperparameters, layer counts |
 | Any company privacy policy PDF | Real-world RAG use case, tests legal language retrieval |
 
-Use the **Retrieval Tester** in the Document Inspector tab to verify chunks are being retrieved correctly before chatting.
+Use the **Retrieval Inspector** tab after sending a question to verify chunks are being retrieved correctly.

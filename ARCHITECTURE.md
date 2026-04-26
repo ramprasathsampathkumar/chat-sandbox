@@ -16,7 +16,7 @@ Ollama exposes both LLM inference **and** embedding models over a local HTTP API
 
 | Need | Chosen | Why |
 |---|---|---|
-| Chat LLM | `ChatOllama` (llama3.2) | Local, no API key |
+| Chat LLM | `ChatOllama` (llama3.2 / qwen3:8b / mistral) | Local, no API key |
 | Embeddings | `OllamaEmbeddings` (nomic-embed-text) | Local HTTP call, no PyO3 deps |
 | Vector store | `InMemoryVectorStore` (langchain-core) | Pure Python, zero deps, per-session |
 | PDF loading | `PyPDFLoader` (pypdf) | Pure Python |
@@ -67,21 +67,45 @@ flowchart TD
     style E fill:#f8d7da,stroke:#721c24
 ```
 
-### Retrieval Tester (Document Inspector tab)
+### Retrieval Inspector (auto-updates after every chat message)
 
 ```mermaid
 flowchart TD
-    A([User types test question]) --> B[OllamaEmbeddings\nembed the query]
+    A([User sends chat message]) --> B[OllamaEmbeddings\nembed the query]
     B --> C[InMemoryVectorStore\nsimilarity_search_with_score]
     C --> D[Top-k chunks\nwith cosine similarity scores]
-    D --> E([Rendered in UI\nScore · Page · Full chunk text])
+    D --> E([Rendered in Retrieval Inspector tab\nScore · Page · Full chunk text])
 
     style A fill:#d4edda,stroke:#28a745
     style E fill:#d4edda,stroke:#28a745
     style C fill:#cce5ff,stroke:#004085
 ```
 
-Use this to verify retrieval quality **before** committing to a full chat — if the right chunks don't surface here, the RAG response won't be accurate.
+Use this to verify retrieval quality after each chat turn — if the right chunks don't surface here, the RAG response won't be accurate.
+
+---
+
+## Chain of Thought
+
+The **Chain of Thought tab** shows the model's internal reasoning for the latest message. It updates automatically after every chat turn alongside the Retrieval Inspector.
+
+### Qwen3 via Ollama
+
+`ChatOllama` is instantiated with `reasoning=True` for qwen3 models. Ollama runs the model in thinking mode and returns the reasoning content separately from the answer. LangChain surfaces it at:
+
+```
+AIMessage.additional_kwargs["reasoning_content"]
+```
+
+The response text (`AIMessage.content`) contains only the final answer — thinking is stripped out by Ollama before it reaches the content field.
+
+### deepseek-r1 and similar models
+
+These models embed thinking inline using `<think>…</think>` tags inside the response text. The app strips those tags from the displayed answer and renders them separately in the Chain of Thought tab.
+
+### Fallback (all other models)
+
+No thinking blocks are emitted. The tab shows a prompt to switch to a reasoning-capable model.
 
 ---
 
@@ -91,8 +115,9 @@ Use this to verify retrieval quality **before** committing to a full chat — if
 flowchart TD
     subgraph UI["Gradio UI (gradio_app.py)"]
         CHAT[Chat Tab\nmodel selector · grounding mode toggle]
-        UPLOAD[Upload Document Tab\nstreaming indexing status]
-        INSPECT[Document Inspector Tab\nchunk browser · charts · retrieval tester]
+        UPLOAD[Upload Document Tab\nstreaming indexing status · chunk inspector]
+        RETRIEVAL[Retrieval Inspector Tab\nauto-updates from latest chat question]
+        COT[Chain of Thought Tab\nauto-updates from latest chat question]
     end
 
     subgraph CORE["core/"]
@@ -104,7 +129,7 @@ flowchart TD
     end
 
     subgraph OLLAMA["Ollama — localhost:11434"]
-        LLM[chat model\nllama3.2 · mistral · custom]
+        LLM[chat model\nllama3.2 · mistral · qwen3:8b · custom]
         EMB[nomic-embed-text\nembeddings]
     end
 
@@ -116,7 +141,8 @@ flowchart TD
 
     CHAT -->|message + grounding mode| CB
     UPLOAD -->|PDF path| RM
-    INSPECT -->|test query| RM
+    RETRIEVAL -->|latest question| RM
+    COT -->|reasoning_content or think tags| CB
     CB --> MF --> LLM
     RM --> EF --> EMB
     RM -->|retriever| CB

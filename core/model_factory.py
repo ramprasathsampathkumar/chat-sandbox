@@ -24,13 +24,13 @@ def get_chat_model(provider: ModelProvider, custom_model_name: str = "") -> Base
     else:
         model_name = MODEL_INTERNAL_NAMES[provider]
 
-    # qwen3 requires think=True to emit <think>…</think> blocks
+    # qwen3 requires reasoning=True to emit thinking blocks via Ollama
     thinking_models = {"qwen3:8b", "qwen3:4b", "qwen3:1.7b", "qwen3:14b", "qwen3:32b"}
-    think = model_name in thinking_models
+    reasoning = model_name in thinking_models
 
     return ChatOllama(
         model=model_name,
         base_url=settings.ollama_base_url,
         temperature=0.7,
-        think=think,
+        reasoning=reasoning,
     )

@@ -43,7 +43,7 @@ def _unpack_result(result) -> tuple[str, str]:
     """
     if hasattr(result, "content"):
         text = result.content if isinstance(result.content, str) else str(result.content)
-        think = result.additional_kwargs.get("thinking", "")
+        think = result.additional_kwargs.get("reasoning_content", "")
     else:
         text = str(result)
         think = ""
