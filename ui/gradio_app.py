@@ -34,12 +34,28 @@ def _provider_label(provider: ModelProvider) -> str:
     return "Ollama"
 
 
-def _extract_thinking(text: str) -> tuple[str, str]:
-    """Split <think>…</think> blocks from response. Returns (clean_text, thinking)."""
-    pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
-    blocks = pattern.findall(text)
-    clean = pattern.sub("", text).strip()
-    return clean, "\n\n".join(blocks).strip()
+def _unpack_result(result) -> tuple[str, str]:
+    """Extract (response_text, thinking) from a chain result.
+
+    Handles two sources of thinking:
+    - additional_kwargs['thinking']: qwen3 via Ollama with think=True
+    - inline <think>…</think> tags: deepseek-r1 and similar models
+    """
+    if hasattr(result, "content"):
+        text = result.content if isinstance(result.content, str) else str(result.content)
+        think = result.additional_kwargs.get("thinking", "")
+    else:
+        text = str(result)
+        think = ""
+
+    # Fallback: strip inline <think> tags if not already captured above
+    if not think:
+        pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+        blocks = pattern.findall(text)
+        text = pattern.sub("", text).strip()
+        think = "\n\n".join(blocks).strip()
+
+    return text.strip(), think
 
 
 def respond(
@@ -90,7 +106,7 @@ def respond(
         rag_label = ""
 
     latency_ms = int((time.time() - start) * 1000)
-    clean_response, think_content = _extract_thinking(response)
+    clean_response, think_content = _unpack_result(response)
     memory.save_context({"input": message}, {"output": clean_response})
 
     badge = (
@@ -214,34 +230,17 @@ def render_cot(cot_data: dict) -> str:
         return _NO_COT_MSG
 
     question = cot_data.get("question", "")
-    lines = [f"## Last question: *{question}*\n"]
-
-    # Model reasoning (thinking tokens)
     think = cot_data.get("think_content", "")
-    lines.append("### Model reasoning")
+
     if think:
-        lines.append(f"```\n{think}\n```\n")
-    else:
-        lines.append(
-            "*No thinking blocks detected in the response. "
-            "For model-level chain of thought, use a reasoning model via Ollama "
-            "— e.g. `deepseek-r1` or `qwen3` (`ollama pull deepseek-r1`).*\n"
-        )
+        return f"## Reasoning for: *{question}*\n\n```\n{think}\n```"
 
-    # RAG pipeline transparency
-    if cot_data.get("rag_active"):
-        rag_mode = cot_data.get("rag_mode", "")
-        lines.append(f"### RAG pipeline — {rag_mode}\n")
-        for i, r in enumerate(cot_data.get("retrieved", []), 1):
-            preview = r["text"][:400] + ("…" if len(r["text"]) > 400 else "")
-            lines.append(
-                f"**#{i} · Page {r['page']} · Score `{r['score']}`**\n\n"
-                f"> {preview}\n"
-            )
-    else:
-        lines.append("### RAG pipeline\n*RAG was not active for this question.*\n")
-
-    return "\n".join(lines)
+    return (
+        f"## Reasoning for: *{question}*\n\n"
+        "*No thinking blocks detected. "
+        "Select **Qwen3 8b (Ollama) 🧠** or `deepseek-r1` from the model dropdown "
+        "to see chain of thought.*"
+    )
 
 
 def clear_all(session_id: str):

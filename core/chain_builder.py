@@ -1,5 +1,4 @@
 from langchain_core.language_models import BaseChatModel
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 
@@ -14,9 +13,10 @@ SYSTEM_PROMPT = (
 RAG_GROUNDED_PROMPT = (
     "You are a helpful assistant currently running as {model_name} via {provider}. "
     "Answer using ONLY the retrieved document excerpts below. "
-    "Do not use any knowledge from your training data. "
-    "If the answer cannot be found in the excerpts, respond with: "
-    "'This information is not present in the retrieved document sections.' "
+    "You may synthesise and infer from the excerpts — you do not need a verbatim match. "
+    "Do not introduce any facts, claims, or context from your training data. "
+    "If the excerpts contain no relevant information at all, say: "
+    "'The retrieved sections do not contain enough information to answer this.' "
     "Cite the page number when relevant.\n\n"
     "Retrieved context:\n{context}"
 )
@@ -58,7 +58,6 @@ def build_chain(model: BaseChatModel, model_name: str, provider: str, session_id
         RunnablePassthrough.assign(history=RunnableLambda(load_history))
         | prompt
         | model
-        | StrOutputParser()
     )
     return chain, memory
 
@@ -95,6 +94,5 @@ def build_rag_chain(model: BaseChatModel, model_name: str, provider: str,
         )
         | prompt
         | model
-        | StrOutputParser()
     )
     return chain, memory
