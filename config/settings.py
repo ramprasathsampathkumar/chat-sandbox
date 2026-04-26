@@ -10,6 +10,7 @@ class ModelProvider(str, Enum):
     OPENAI_GPT35 = "openai_gpt35"
     OLLAMA_LLAMA3 = "ollama_llama3"
     OLLAMA_MISTRAL = "ollama_mistral"
+    OLLAMA_QWEN3 = "ollama_qwen3"
     OLLAMA_CUSTOM = "ollama_custom"
 
 
@@ -23,6 +24,7 @@ MODEL_DISPLAY_NAMES: dict[ModelProvider, str] = {
     ModelProvider.OPENAI_GPT35: "GPT-3.5 Turbo (OpenAI)",
     ModelProvider.OLLAMA_LLAMA3: "Llama 3.2 (Ollama)",
     ModelProvider.OLLAMA_MISTRAL: "Mistral (Ollama)",
+    ModelProvider.OLLAMA_QWEN3: "Qwen3 8b (Ollama) 🧠",
     ModelProvider.OLLAMA_CUSTOM: "Custom (Ollama)",
 }
 
@@ -31,6 +33,7 @@ MODEL_INTERNAL_NAMES: dict[ModelProvider, str] = {
     ModelProvider.OPENAI_GPT35: "gpt-3.5-turbo",
     ModelProvider.OLLAMA_LLAMA3: "llama3.2",
     ModelProvider.OLLAMA_MISTRAL: "mistral",
+    ModelProvider.OLLAMA_QWEN3: "qwen3:8b",
 }
 
 # Jailbreak patterns — block these inputs outright
