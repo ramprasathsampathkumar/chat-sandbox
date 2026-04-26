@@ -68,9 +68,10 @@ chat-sandbox/
 ├── core/
 │   ├── __init__.py
 │   ├── model_factory.py    # Factory → LangChain BaseChatModel
-│   ├── chain_builder.py    # LCEL chain assembly
-│   ├── embedding_factory.py # Embedding model switcher (Phase 3)
-│   └── memory_manager.py   # Per-session chat history
+│   ├── chain_builder.py    # LCEL chains: plain + RAG (grounded / augmented)
+│   ├── embedding_factory.py # OllamaEmbeddings factory
+│   ├── memory_manager.py   # Per-session ConversationBufferWindowMemory
+│   └── rag_manager.py      # PDF indexing, retrieval, chunk inspection, retrieval tester
 │
 ├── rai/
 │   ├── __init__.py
@@ -95,20 +96,19 @@ chat-sandbox/
 
 ## Tech Stack
 
-| Layer | Library | Version |
+| Layer | Library | Notes |
 |---|---|---|
-| UI | gradio | 4.44.1 |
-| LLM orchestration | langchain | 0.3.x |
-| OpenAI provider | langchain-openai | 0.2.x |
-| Ollama provider | langchain-ollama | 0.2.x |
-| Embeddings (local) | sentence-transformers | 3.3.x |
-| Embeddings (OpenAI) | langchain-openai | (same) |
-| Vector store | chromadb | 0.5.x |
-| Structured logging | structlog | 24.x |
-| Content moderation | better-profanity | 0.7.x |
-| Env management | python-dotenv | 1.0.x |
-| Validation | pydantic-settings | 2.x |
-| Tokenizer | tiktoken | 0.8.x |
+| UI | gradio 6.x | `audioop-lts` bundled; theme moved to `launch()` |
+| LLM orchestration | langchain 0.3.x / 1.x | LCEL chains |
+| OpenAI provider | langchain-openai 0.2.x | Requires `OPENAI_API_KEY` |
+| Ollama provider | langchain-ollama 0.2.x | Local HTTP, no C/Rust deps |
+| Embeddings | OllamaEmbeddings (nomic-embed-text) | Replaces sentence-transformers — PyO3-free |
+| Vector store | InMemoryVectorStore (langchain-core) | Pure Python, per-session |
+| PDF loading | PyPDFLoader (pypdf) | Pure Python |
+| Structured logging | structlog 24.x | |
+| Content moderation | better-profanity 0.7.x | |
+| Env management | python-dotenv 1.0.x | |
+| Validation | pydantic-settings 2.x | |
 
 ---
 
@@ -124,12 +124,9 @@ chat-sandbox/
 | `OLLAMA_MISTRAL` | mistral | `ollama pull mistral` required |
 | `OLLAMA_CUSTOM` | user-specified | Free-text model name in UI |
 
-### Embedding Models (via `EmbeddingProvider` enum, Phase 3)
+### Embedding Model
 
-| Provider | Model | Notes |
-|---|---|---|
-| `OPENAI_SMALL` | text-embedding-3-small | ~$0.02/1M tokens |
-| `LOCAL_MINILM` | all-MiniLM-L6-v2 | ~90 MB download on first use |
+`nomic-embed-text` via Ollama — 768-dim vectors, local HTTP, no PyO3 deps. Pull once with `ollama pull nomic-embed-text`.
 
 ---
 
@@ -206,33 +203,34 @@ docker run --env-file .env -p 7860:7860 chat-sandbox
 
 ## Build Phases
 
-### Phase 1 — MVP ✅ (current)
+### Phase 1 — MVP ✅
 - [x] Project scaffold
-- [x] `config/settings.py`
+- [x] `config/settings.py` — model registry, enums, health check
 - [x] `core/model_factory.py` — OpenAI + Ollama
-- [x] `core/memory_manager.py`
+- [x] `core/memory_manager.py` — per-session window memory (k=10)
 - [x] `core/chain_builder.py` — LCEL chain
 - [x] `ui/gradio_app.py` — chat UI with model switcher
 - [x] `app.py` entry point
 - [x] `Dockerfile` + `.dockerignore`
-- [ ] Smoke test: chat with OpenAI and Ollama, switch models mid-session
 
 ### Phase 2 — Responsible AI Layer
-- [ ] `rai/logger.py`
-- [ ] `rai/guardrails.py`
-- [ ] `rai/explainability.py`
+- [ ] `rai/logger.py` — JSONL audit log per turn
+- [ ] `rai/guardrails.py` — profanity, PII, prompt injection filters
+- [ ] `rai/explainability.py` — transparency badge builder
 - [ ] Wire into Gradio respond function
 - [ ] System prompt transparency text
 
-### Phase 3 — Embeddings / RAG
-- [ ] `core/embedding_factory.py`
-- [ ] ChromaDB integration
-- [ ] Document upload tab in Gradio
-- [ ] `ConversationalRetrievalChain`
-- [ ] Retrieval confidence in badge
+### Phase 3 — RAG ✅
+- [x] `core/embedding_factory.py` — OllamaEmbeddings (nomic-embed-text)
+- [x] `core/rag_manager.py` — PyPDF → chunk → embed → InMemoryVectorStore
+- [x] Upload Document tab — streaming status updates, auto-activates RAG mode
+- [x] RAG chain — top-k retrieval injected into prompt, page citations in badge
+- [x] Document Inspector tab — chunk browser + size/distribution charts
+- [x] Retrieval Tester — query → top-k chunks with similarity scores and full text
+- [x] RAG grounding mode toggle — *Grounded (retrieval-only)* vs *Augmented (retrieval + parametric)*
 
 ### Phase 4 — Polish
-- [ ] Custom Ollama model free-text input
+- [x] Custom Ollama model free-text input
 - [ ] Session export (download chat as JSON)
 - [ ] `ConversationSummaryBufferMemory` option
 - [ ] Test suite

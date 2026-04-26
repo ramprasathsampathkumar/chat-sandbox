@@ -51,17 +51,37 @@ flowchart TD
 flowchart TD
     A([User sends message]) --> B[OllamaEmbeddings\nembed the query]
     B --> C[InMemoryVectorStore\ncosine similarity search]
-    C --> D[Top-k chunks\nk=4 by default]
-    D --> E[RAG prompt template\nSystem + context chunks + history + question]
-    E --> F[ChatOllama\nllama3.2 or selected model]
-    F --> G[Response + source pages cited]
-    G --> H([Displayed in chat with badge])
+    C --> D[Top-8 chunks\nk=8 for broader coverage]
+    D --> E{RAG grounding mode}
+    E -->|Grounded — retrieval-only| F1[Strict prompt\nAnswer ONLY from retrieved chunks\nRefuse if not found]
+    E -->|Augmented — retrieval + parametric| F2[Augmented prompt\nBlend chunks + model knowledge\nLabel each source]
+    F1 --> G[Selected chat model]
+    F2 --> G
+    G --> H[Response + page citations]
+    H --> I([Displayed in chat with RAG mode badge])
 
     style A fill:#d4edda,stroke:#28a745
-    style H fill:#d4edda,stroke:#28a745
+    style I fill:#d4edda,stroke:#28a745
     style C fill:#cce5ff,stroke:#004085
-    style F fill:#fff3cd,stroke:#856404
+    style G fill:#fff3cd,stroke:#856404
+    style E fill:#f8d7da,stroke:#721c24
 ```
+
+### Retrieval Tester (Document Inspector tab)
+
+```mermaid
+flowchart TD
+    A([User types test question]) --> B[OllamaEmbeddings\nembed the query]
+    B --> C[InMemoryVectorStore\nsimilarity_search_with_score]
+    C --> D[Top-k chunks\nwith cosine similarity scores]
+    D --> E([Rendered in UI\nScore · Page · Full chunk text])
+
+    style A fill:#d4edda,stroke:#28a745
+    style E fill:#d4edda,stroke:#28a745
+    style C fill:#cce5ff,stroke:#004085
+```
+
+Use this to verify retrieval quality **before** committing to a full chat — if the right chunks don't surface here, the RAG response won't be accurate.
 
 ---
 
@@ -69,21 +89,22 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    subgraph UI["Gradio UI (app.py)"]
-        CHAT[Chat Tab]
-        UPLOAD[Upload Tab]
+    subgraph UI["Gradio UI (gradio_app.py)"]
+        CHAT[Chat Tab\nmodel selector · grounding mode toggle]
+        UPLOAD[Upload Document Tab\nstreaming indexing status]
+        INSPECT[Document Inspector Tab\nchunk browser · charts · retrieval tester]
     end
 
     subgraph CORE["core/"]
         MF[model_factory.py\nget_chat_model]
         EF[embedding_factory.py\nget_embedding_model]
-        CB[chain_builder.py\nbuild_chain / build_rag_chain]
-        MM[memory_manager.py\nper-session history]
-        RM[rag_manager.py\nper-session vectorstore]
+        CB[chain_builder.py\nbuild_chain\nbuild_rag_chain grounded/augmented]
+        MM[memory_manager.py\nper-session window memory k=10]
+        RM[rag_manager.py\nindex_pdf · get_retriever\nget_chunks · test_retrieval]
     end
 
     subgraph OLLAMA["Ollama — localhost:11434"]
-        LLM[llama3.2\nchat]
+        LLM[chat model\nllama3.2 · mistral · custom]
         EMB[nomic-embed-text\nembeddings]
     end
 
@@ -93,8 +114,9 @@ flowchart TD
         EXP[explainability.py]
     end
 
-    CHAT -->|message + history| CB
-    UPLOAD -->|PDF bytes| RM
+    CHAT -->|message + grounding mode| CB
+    UPLOAD -->|PDF path| RM
+    INSPECT -->|test query| RM
     CB --> MF --> LLM
     RM --> EF --> EMB
     RM -->|retriever| CB
@@ -111,7 +133,7 @@ flowchart TD
 | `chunk_size` | 800 tokens | Fits comfortably in llama3.2's context with 4 chunks + history |
 | `chunk_overlap` | 100 tokens | Prevents cutting sentences mid-thought at boundaries |
 | `separators` | `["\n\n", "\n", ". ", " "]` | Respects paragraph → sentence → word hierarchy |
-| Top-k retrieval | 4 chunks | Balances context richness vs prompt length |
+| Top-k retrieval | 8 chunks | Increased from 4 — better coverage for broad queries like summarisation |
 
 ## Embedding Model
 
