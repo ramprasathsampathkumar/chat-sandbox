@@ -1,3 +1,4 @@
+import re
 import time
 import gradio as gr
 import matplotlib
@@ -14,11 +15,17 @@ from config.settings import (
 from core.model_factory import get_chat_model
 from core.chain_builder import build_chain, build_rag_chain
 from core.memory_manager import new_session_id, clear_memory
-from core.rag_manager import index_pdf, get_retriever, get_chunks, has_document, clear_document, test_retrieval
+from core.rag_manager import index_pdf, get_retriever, get_chunks, clear_document, test_retrieval
 
 PROVIDER_DISPLAY_TO_ENUM = {v: k for k, v in MODEL_DISPLAY_NAMES.items()}
 DISPLAY_NAMES = list(MODEL_DISPLAY_NAMES.values())
 DEFAULT_MODEL = MODEL_DISPLAY_NAMES[ModelProvider.OLLAMA_LLAMA3]
+
+RAG_MODE_GROUNDED = "Grounded — retrieval-only"
+RAG_MODE_AUGMENTED = "Augmented — retrieval + parametric"
+
+_NO_RETRIEVAL_MSG = "Ask a question in the **Chat** tab to see retrieval results here."
+_NO_COT_MSG = "Send a message in the **Chat** tab to see the chain of thought here."
 
 
 def _provider_label(provider: ModelProvider) -> str:
@@ -27,8 +34,12 @@ def _provider_label(provider: ModelProvider) -> str:
     return "Ollama"
 
 
-RAG_MODE_GROUNDED = "Grounded — retrieval-only"
-RAG_MODE_AUGMENTED = "Augmented — retrieval + parametric"
+def _extract_thinking(text: str) -> tuple[str, str]:
+    """Split <think>…</think> blocks from response. Returns (clean_text, thinking)."""
+    pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+    blocks = pattern.findall(text)
+    clean = pattern.sub("", text).strip()
+    return clean, "\n\n".join(blocks).strip()
 
 
 def respond(
@@ -38,9 +49,10 @@ def respond(
     custom_model_name: str,
     session_id: str,
     rag_mode: str,
-) -> tuple[str, list]:
+) -> tuple[str, list, str, dict]:
+    empty_cot: dict = {}
     if not message.strip():
-        return "", history
+        return "", history, "", empty_cot
 
     provider = PROVIDER_DISPLAY_TO_ENUM[model_display]
 
@@ -48,7 +60,7 @@ def respond(
         model = get_chat_model(provider, custom_model_name=custom_model_name)
     except ValueError as e:
         history.append({"role": "assistant", "content": f"Model error: {e}"})
-        return "", history
+        return "", history, "", empty_cot
 
     from config.settings import MODEL_INTERNAL_NAMES
     model_name = (
@@ -78,7 +90,8 @@ def respond(
         rag_label = ""
 
     latency_ms = int((time.time() - start) * 1000)
-    memory.save_context({"input": message}, {"output": response})
+    clean_response, think_content = _extract_thinking(response)
+    memory.save_context({"input": message}, {"output": clean_response})
 
     badge = (
         f"\n\n---\n"
@@ -86,9 +99,18 @@ def respond(
         f"Latency: {latency_ms}ms{rag_label}*"
     )
 
+    retrieved = test_retrieval(session_id, message) if retriever is not None else []
+    cot_data = {
+        "question": message,
+        "rag_active": retriever is not None,
+        "rag_mode": rag_mode,
+        "retrieved": retrieved,
+        "think_content": think_content,
+    }
+
     history.append({"role": "user", "content": message})
-    history.append({"role": "assistant", "content": response + badge})
-    return "", history
+    history.append({"role": "assistant", "content": clean_response + badge})
+    return "", history, message, cot_data
 
 
 def upload_pdf(pdf_file, session_id: str):
@@ -120,35 +142,26 @@ def build_inspector_data(session_id: str) -> tuple[pd.DataFrame, plt.Figure]:
         fig.tight_layout()
         return empty_df, fig
 
-    rows = []
-    char_counts = []
-    page_numbers = []
-
+    rows, char_counts, page_numbers = [], [], []
     for i, chunk in enumerate(chunks):
         page = chunk.metadata.get("page", 0)
         chars = len(chunk.page_content)
         preview = chunk.page_content[:120].replace("\n", " ").strip()
         if len(chunk.page_content) > 120:
             preview += "…"
-        rows.append({
-            "#": i + 1,
-            "Page": page + 1,
-            "Characters": chars,
-            "Preview": preview,
-        })
+        rows.append({"#": i + 1, "Page": page + 1, "Characters": chars, "Preview": preview})
         char_counts.append(chars)
         page_numbers.append(page + 1)
 
     df = pd.DataFrame(rows)
 
-    # --- plots ---
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 4))
     fig.patch.set_facecolor("#f9f9f9")
 
-    # A: chunk size histogram
     ax1.hist(char_counts, bins=30, color="#4C72B0", edgecolor="white", linewidth=0.5)
     ax1.axvline(sum(char_counts) / len(char_counts), color="#DD4444",
-                linestyle="--", linewidth=1.2, label=f"Mean: {sum(char_counts)//len(char_counts)} chars")
+                linestyle="--", linewidth=1.2,
+                label=f"Mean: {sum(char_counts)//len(char_counts)} chars")
     ax1.set_title("Chunk Size Distribution", fontsize=13, fontweight="bold", pad=10)
     ax1.set_xlabel("Characters per chunk")
     ax1.set_ylabel("Number of chunks")
@@ -156,11 +169,9 @@ def build_inspector_data(session_id: str) -> tuple[pd.DataFrame, plt.Figure]:
     ax1.set_facecolor("#ffffff")
     ax1.spines[["top", "right"]].set_visible(False)
 
-    # B: chunks per page bar chart
     page_counts = Counter(page_numbers)
     pages_sorted = sorted(page_counts.keys())
     counts_sorted = [page_counts[p] for p in pages_sorted]
-
     bar_colors = ["#4C72B0" if c < max(counts_sorted) else "#DD4444" for c in counts_sorted]
     ax2.bar(pages_sorted, counts_sorted, color=bar_colors, edgecolor="white", linewidth=0.5)
     ax2.set_title("Chunks per Page", fontsize=13, fontweight="bold", pad=10)
@@ -169,7 +180,6 @@ def build_inspector_data(session_id: str) -> tuple[pd.DataFrame, plt.Figure]:
     ax2.set_facecolor("#ffffff")
     ax2.spines[["top", "right"]].set_visible(False)
 
-    # annotate highest page
     peak_page = max(page_counts, key=page_counts.get)
     ax2.annotate(
         f"peak p.{peak_page}",
@@ -182,14 +192,14 @@ def build_inspector_data(session_id: str) -> tuple[pd.DataFrame, plt.Figure]:
     return df, fig
 
 
-def run_retrieval_test(query: str, session_id: str) -> str:
-    if not query.strip():
-        return "Enter a question above and click **Test retrieval**."
-    results = test_retrieval(session_id, query)
+def render_retrieval_inspector(question: str, session_id: str) -> str:
+    if not question:
+        return _NO_RETRIEVAL_MSG
+    results = test_retrieval(session_id, question)
     if not results:
-        return "No document indexed yet. Upload a PDF first."
+        return "No document indexed — upload a PDF in the **Upload Document** tab first."
 
-    lines = [f"### Top {len(results)} chunks for: *{query}*\n"]
+    lines = [f"### Retrieval results for: *{question}*\n"]
     for i, r in enumerate(results, 1):
         lines.append(
             f"---\n"
@@ -199,19 +209,57 @@ def run_retrieval_test(query: str, session_id: str) -> str:
     return "\n".join(lines)
 
 
-def clear_all(session_id: str) -> tuple[list, str, str]:
+def render_cot(cot_data: dict) -> str:
+    if not cot_data:
+        return _NO_COT_MSG
+
+    question = cot_data.get("question", "")
+    lines = [f"## Last question: *{question}*\n"]
+
+    # Model reasoning (thinking tokens)
+    think = cot_data.get("think_content", "")
+    lines.append("### Model reasoning")
+    if think:
+        lines.append(f"```\n{think}\n```\n")
+    else:
+        lines.append(
+            "*No thinking blocks detected in the response. "
+            "For model-level chain of thought, use a reasoning model via Ollama "
+            "— e.g. `deepseek-r1` or `qwen3` (`ollama pull deepseek-r1`).*\n"
+        )
+
+    # RAG pipeline transparency
+    if cot_data.get("rag_active"):
+        rag_mode = cot_data.get("rag_mode", "")
+        lines.append(f"### RAG pipeline — {rag_mode}\n")
+        for i, r in enumerate(cot_data.get("retrieved", []), 1):
+            preview = r["text"][:400] + ("…" if len(r["text"]) > 400 else "")
+            lines.append(
+                f"**#{i} · Page {r['page']} · Score `{r['score']}`**\n\n"
+                f"> {preview}\n"
+            )
+    else:
+        lines.append("### RAG pipeline\n*RAG was not active for this question.*\n")
+
+    return "\n".join(lines)
+
+
+def clear_all(session_id: str):
     clear_memory(session_id)
     clear_document(session_id)
     new_id = new_session_id()
-    return [], new_id, "No document loaded."
+    return [], new_id, "No document loaded.", _NO_RETRIEVAL_MSG, {}, _NO_COT_MSG
 
 
 def build_ui() -> gr.Blocks:
     with gr.Blocks(title="Chat Sandbox") as demo:
         gr.Markdown("## Chat Sandbox")
         session_id_state = gr.State(new_session_id())
+        last_question_state = gr.State("")
+        cot_data_state = gr.State({})
 
         with gr.Tabs():
+            # ── Chat ──────────────────────────────────────────────────────────
             with gr.Tab("Chat"):
                 with gr.Row():
                     with gr.Column(scale=3):
@@ -251,6 +299,7 @@ def build_ui() -> gr.Blocks:
                         doc_status = gr.Markdown("No document loaded.")
                         clear_btn = gr.Button("Clear chat + document", variant="secondary")
 
+            # ── Upload Document ───────────────────────────────────────────────
             with gr.Tab("Upload Document"):
                 gr.Markdown(
                     "Upload a PDF to enable **RAG mode**. "
@@ -265,12 +314,12 @@ def build_ui() -> gr.Blocks:
                 upload_btn = gr.Button("Index document", variant="primary")
                 upload_status = gr.Markdown("No document loaded.")
 
-            with gr.Tab("Document Inspector"):
+                gr.Markdown("---\n### Document Inspector")
                 gr.Markdown(
-                    "Inspect the chunks extracted from the indexed PDF. "
-                    "Use this to verify chunking quality before chatting."
+                    "Inspect chunk quality after indexing. "
+                    "Auto-refreshes on upload — or click **Refresh** manually."
                 )
-                inspect_btn = gr.Button("Load inspector", variant="secondary")
+                inspect_btn = gr.Button("Refresh inspector", variant="secondary")
                 with gr.Row():
                     chunk_plot = gr.Plot(label="Chunk analytics", format="png")
                 with gr.Row():
@@ -282,22 +331,27 @@ def build_ui() -> gr.Blocks:
                         interactive=False,
                     )
 
-                gr.Markdown("---\n### Retrieval Tester")
+            # ── Retrieval Inspector ───────────────────────────────────────────
+            with gr.Tab("Retrieval Inspector"):
                 gr.Markdown(
-                    "Type a question to see which chunks the retriever would surface — "
-                    "before you commit to a full chat. Helps you verify RAG quality."
+                    "Shows the top-k chunks the retriever surfaced for the **latest chat question** — "
+                    "updates automatically after every message. "
+                    "Use this to verify the right sections are being retrieved before diagnosing answer quality."
                 )
-                with gr.Row():
-                    retrieval_query = gr.Textbox(
-                        placeholder="e.g. What are the main conclusions?",
-                        show_label=False,
-                        scale=9,
-                        container=False,
-                    )
-                    retrieval_btn = gr.Button("Test retrieval", variant="primary", scale=1)
-                retrieval_output = gr.Markdown("Enter a question above and click **Test retrieval**.")
+                retrieval_inspector_md = gr.Markdown(_NO_RETRIEVAL_MSG)
 
-        # --- event handlers ---
+            # ── Chain of Thought ──────────────────────────────────────────────
+            with gr.Tab("Chain of Thought"):
+                gr.Markdown(
+                    "Shows reasoning and retrieval context for the **latest chat question** — "
+                    "updates automatically after every message.\n\n"
+                    "**Model reasoning** requires a thinking-capable model "
+                    "(e.g. `deepseek-r1`, `qwen3` via Ollama). "
+                    "**RAG pipeline context** is always shown when a document is indexed."
+                )
+                cot_md = gr.Markdown(_NO_COT_MSG)
+
+        # ── Event handlers ────────────────────────────────────────────────────
 
         def toggle_custom(model_display: str) -> gr.update:
             return gr.update(
@@ -316,40 +370,40 @@ def build_ui() -> gr.Blocks:
             outputs=[doc_status],
         )
 
-        inspect_btn.click(
-            build_inspector_data,
-            inputs=[session_id_state],
-            outputs=[chunk_table, chunk_plot],
-        )
-
-        # auto-refresh inspector after indexing completes
+        # auto-refresh inspector after indexing
         upload_btn.click(
             build_inspector_data,
             inputs=[session_id_state],
             outputs=[chunk_table, chunk_plot],
         )
 
-        retrieval_btn.click(
-            run_retrieval_test,
-            inputs=[retrieval_query, session_id_state],
-            outputs=[retrieval_output],
-        )
-        retrieval_query.submit(
-            run_retrieval_test,
-            inputs=[retrieval_query, session_id_state],
-            outputs=[retrieval_output],
+        inspect_btn.click(
+            build_inspector_data,
+            inputs=[session_id_state],
+            outputs=[chunk_table, chunk_plot],
         )
 
         clear_btn.click(
             clear_all,
             inputs=[session_id_state],
-            outputs=[chatbot, session_id_state, doc_status],
+            outputs=[chatbot, session_id_state, doc_status,
+                     retrieval_inspector_md, cot_data_state, cot_md],
         )
 
-        submit_inputs = [msg_input, chatbot, model_selector, custom_model_input, session_id_state, rag_mode_radio]
-        submit_outputs = [msg_input, chatbot]
-        msg_input.submit(respond, submit_inputs, submit_outputs)
-        send_btn.click(respond, submit_inputs, submit_outputs)
+        submit_inputs = [msg_input, chatbot, model_selector, custom_model_input,
+                         session_id_state, rag_mode_radio]
+        submit_outputs = [msg_input, chatbot, last_question_state, cot_data_state]
+
+        for trigger in (msg_input.submit, send_btn.click):
+            trigger(respond, submit_inputs, submit_outputs).then(
+                render_retrieval_inspector,
+                inputs=[last_question_state, session_id_state],
+                outputs=[retrieval_inspector_md],
+            ).then(
+                render_cot,
+                inputs=[cot_data_state],
+                outputs=[cot_md],
+            )
 
     return demo
 
