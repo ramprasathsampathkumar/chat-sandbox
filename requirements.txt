@@ -16,6 +16,10 @@ pypdf>=3.0.0
 pytest==8.3.4
 pytest-asyncio==0.24.0
 
+# Eval
+ragas>=0.2.0
+datasets>=2.0.0
+
 # Phase 3 (RAG) — requires Python <=3.13 until PyO3 adds 3.14 support
 # tiktoken==0.8.0
 # sentence-transformers==3.3.1

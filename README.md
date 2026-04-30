@@ -14,6 +14,7 @@ A modular chatbot with a Gradio UI, LangChain backend, swappable models (OpenAI 
 - **Document Inspector** — chunk browser and size distribution charts to verify indexing quality
 - **Per-session memory** — 10-turn sliding window, isolated per browser session
 - **Transparency badges** — every response shows model, provider, latency, and RAG mode
+- **Live eval** — optional per-message RAGAS metrics (Answer Relevancy, Faithfulness, Context Precision) via OpenAI or Ollama; runs async so the chat response arrives first
 
 ---
 
@@ -54,11 +55,15 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env and set your values (see Configuration below)
 
-# 5. Start the app
+# 5. Start the app  ← always use app.py, not ui/gradio_app.py directly
 python3 app.py
 ```
 
 Open **http://localhost:7860** in your browser.
+
+> **Important:** always launch via `app.py` from the project root with the venv active.
+> Running `ui/gradio_app.py` directly will fail with `ModuleNotFoundError: No module named 'config'`
+> because `config/` and `core/` are resolved relative to the project root.
 
 ---
 
@@ -144,7 +149,8 @@ chat-sandbox/
 │   ├── chain_builder.py        # LCEL chains (plain + RAG, grounded + augmented)
 │   ├── memory_manager.py       # Per-session ConversationBufferWindowMemory
 │   ├── embedding_factory.py    # OllamaEmbeddings factory
-│   └── rag_manager.py          # PDF indexing, retrieval, chunk inspection
+│   ├── rag_manager.py          # PDF indexing, retrieval, chunk inspection
+│   └── eval_runner.py          # RAGAS per-message eval (async, no-reference metrics)
 │
 ├── ui/
 │   └── gradio_app.py           # Gradio Blocks — all tabs and event handlers
@@ -170,6 +176,7 @@ chat-sandbox/
 | Embeddings | OllamaEmbeddings (nomic-embed-text) |
 | Vector store | InMemoryVectorStore (langchain-core) |
 | PDF loading | PyPDFLoader (pypdf) |
+| Eval metrics | RAGAS 0.2+ (Answer Relevancy, Faithfulness, Context Precision) |
 | Structured logging | structlog |
 | Content moderation | better-profanity |
 | Config | pydantic-settings |
