@@ -14,7 +14,8 @@ A modular chatbot with a Gradio UI, LangChain backend, swappable models (OpenAI 
 - **Document Inspector** — chunk browser and size distribution charts to verify indexing quality
 - **Per-session memory** — 10-turn sliding window, isolated per browser session
 - **Transparency badges** — every response shows model, provider, latency, and RAG mode
-- **Live eval** — optional per-message RAGAS metrics (Answer Relevancy, Faithfulness, Context Precision) via OpenAI or Ollama; runs async so the chat response arrives first
+- **LLM-as-Judge panel** — always-visible judge panel in the chat view; scores every response on Accuracy, Groundedness, Helpfulness, and Safety (0–1 each) with one-sentence reasoning per dimension; judge model is independently configurable
+- **Live RAGAS eval** — optional per-message RAGAS metrics (Answer Relevancy, Faithfulness, Context Precision) via OpenAI or Ollama; runs async so the chat response arrives first
 
 ---
 
@@ -132,6 +133,39 @@ Shows the model's internal reasoning for the **latest chat question**, updated a
 
 ---
 
+## Evaluation
+
+The app has two independent evaluation layers that run after every chat message.
+
+### LLM-as-Judge (always on)
+
+A configurable judge model scores the latest response on four rubric dimensions. The judge model is selected separately from the chat model — any supported model can serve as judge.
+
+| Dimension | What it measures | Scored when |
+|---|---|---|
+| **Accuracy** | Is the answer factually correct and precise? | Always |
+| **Helpfulness** | Does the answer effectively address the question? | Always |
+| **Safety** | Does the answer avoid harmful, misleading, or policy-violating content? | Always |
+| **Groundedness** | Is the answer supported by the retrieved context? Does it avoid adding facts not in the context? | RAG mode only |
+
+Each dimension returns a score from **0.0** (very poor) to **1.0** (excellent) plus a one-sentence reasoning. An **overall score** is the mean of all active dimensions. Results are rendered as a colour-coded bar chart (🟢 ≥ 0.8 · 🟡 ≥ 0.5 · 🔴 < 0.5).
+
+Implementation: `core/judge_runner.py` — uses `with_structured_output` (Pydantic schema) for guaranteed JSON; no regex parsing. Runs in `asyncio.to_thread` so it never blocks the chat response.
+
+### RAGAS per-message scoring (opt-in)
+
+Enable the **"Enable live eval"** toggle in the Chat tab to add RAGAS scores after each message (~5–10 s added latency).
+
+| Metric | What it measures | Requires |
+|---|---|---|
+| **Answer Relevancy** | Does the answer address the question? | Question + answer |
+| **Faithfulness** | Does the answer stay within the retrieved context? | RAG mode |
+| **Context Precision** | Are the retrieved chunks actually relevant to the question? | RAG mode |
+
+Full 5-metric batch eval (adds Context Recall + Answer Correctness when a ground-truth column is provided) is available in the **Batch Eval** tab via CSV upload.
+
+---
+
 ## Project Structure
 
 ```
@@ -176,6 +210,7 @@ chat-sandbox/
 | Embeddings | OllamaEmbeddings (nomic-embed-text) |
 | Vector store | InMemoryVectorStore (langchain-core) |
 | PDF loading | PyPDFLoader (pypdf) |
+| LLM-as-Judge | `core/judge_runner.py` — Accuracy, Groundedness, Helpfulness, Safety |
 | Eval metrics | RAGAS 0.2+ (Answer Relevancy, Faithfulness, Context Precision) |
 | Structured logging | structlog |
 | Content moderation | better-profanity |
